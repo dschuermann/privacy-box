@@ -1,1 +1,2 @@
 include ':PrivacyBox'
+include ':extern:openpgp-api-lib'

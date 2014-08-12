@@ -31,6 +31,7 @@ import android.database.MatrixCursor;
 import android.database.MatrixCursor.RowBuilder;
 import android.os.Bundle;
 import android.os.CancellationSignal;
+import android.os.Handler;
 import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
 import android.provider.DocumentsContract.Document;
@@ -42,6 +43,9 @@ import android.util.Log;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+import org.openintents.openpgp.IOpenPgpService;
+import org.openintents.openpgp.OpenPgpMetadata;
+import org.openintents.openpgp.util.OpenPgpServiceConnection;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -50,6 +54,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.KeyStore;
 import java.security.SecureRandom;
+import java.util.concurrent.Semaphore;
 
 import javax.crypto.Mac;
 import javax.crypto.SecretKey;
@@ -121,57 +126,86 @@ public class VaultProvider extends DocumentsProvider {
 
     private final Object mIdLock = new Object();
 
-    /**
-     * Flag indicating that the {@link SecretKeyWrapper} public/private key is
-     * hardware-backed. A software keystore is more vulnerable to offline
-     * attacks if the device is compromised.
-     */
-    private boolean mHardwareBacked;
 
-    /**
-     * File where wrapped symmetric key is stored.
-     */
+    private OpenPgpServiceConnection mServiceConnection;
+
+    private static final String OPEN_KEYCHAIN_PACKAGE = "org.sufficientlysecure.keychain";
+
+//    /**
+//     * Flag indicating that the {@link SecretKeyWrapper} public/private key is
+//     * hardware-backed. A software keystore is more vulnerable to offline
+//     * attacks if the device is compromised.
+//     */
+//    private boolean mHardwareBacked;
+
+//    /**
+//     * File where wrapped symmetric key is stored.
+//     */
 //    private File mKeyFile;
     /**
      * Directory where all encrypted documents are stored.
      */
     private File mDocumentsDir;
 
-//    private SecretKey mDataKey;
-//    private SecretKey mMacKey;
-
     @Override
     public boolean onCreate() {
-        mHardwareBacked = KeyChain.isBoundKeyAlgorithm("RSA");
+        Log.d(TAG, "VaultProvider.onCreate");
 
-//        mKeyFile = new File(getContext().getFilesDir(), "strongroom.key");
         mDocumentsDir = new File(getContext().getFilesDir(), "documents");
         mDocumentsDir.mkdirs();
 
+//        Handler mainHandler = new Handler(getContext().getMainLooper());
+
+        mServiceConnection = new OpenPgpServiceConnection(
+                getContext(),
+                OPEN_KEYCHAIN_PACKAGE,
+                new OpenPgpServiceConnection.OnBound() {
+                    @Override
+                    public void onBound(IOpenPgpService service) {
+                        Log.d(TAG, "onBound");
+
+                        try {
+                            // Load secret key and ensure our root document is ready.
+                            //loadOrGenerateKeys(getContext(), mKeyFile);
+                            initDocument(Long.parseLong(DEFAULT_DOCUMENT_ID), Document.MIME_TYPE_DIR, null);
+
+                        } catch (IOException e) {
+                            throw new IllegalStateException(e);
+                        } catch (GeneralSecurityException e) {
+                            throw new IllegalStateException(e);
+                        }
+                    }
+
+                    @Override
+                    public void onError(Exception e) {
+                        Log.e(TAG, "exception when binding to service!", e);
+                    }
+                }
+        );
+
+        mServiceConnection.bindToService();
+
+        // TODO
+        // I was not able to do bindToService to the provider via a thread and wait/notify...
+        // maybe binding does not work from every thread???
         try {
-            // Load secret key and ensure our root document is ready.
-//            loadOrGenerateKeys(getContext(), mKeyFile);
-            initDocument(Long.parseLong(DEFAULT_DOCUMENT_ID), Document.MIME_TYPE_DIR, null);
-
-        } catch (IOException e) {
-            throw new IllegalStateException(e);
-        } catch (GeneralSecurityException e) {
-            throw new IllegalStateException(e);
+            Thread.sleep(1000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
         }
-
         return true;
     }
 
     /**
      * Used for testing.
      */
-    void wipeAllContents() throws IOException, GeneralSecurityException {
-        for (File f : mDocumentsDir.listFiles()) {
-            f.delete();
-        }
-
-        initDocument(Long.parseLong(DEFAULT_DOCUMENT_ID), Document.MIME_TYPE_DIR, null);
-    }
+//    void wipeAllContents() throws IOException, GeneralSecurityException {
+//        for (File f : mDocumentsDir.listFiles()) {
+//            f.delete();
+//        }
+//
+//        initDocument(Long.parseLong(DEFAULT_DOCUMENT_ID), Document.MIME_TYPE_DIR, null);
+//    }
 
     /**
      * Load our symmetric secret key and use it to derive two different data and
@@ -211,7 +245,6 @@ public class VaultProvider extends DocumentsProvider {
 //        mDataKey = new SecretKeySpec(rawDataKey, "AES");
 //        mMacKey = new SecretKeySpec(rawMacKey, "HmacSHA256");
 //    }
-
     @Override
     public Cursor queryRoots(String[] projection) throws FileNotFoundException {
         final MatrixCursor result = new MatrixCursor(resolveRootProjection(projection));
@@ -222,16 +255,13 @@ public class VaultProvider extends DocumentsProvider {
         row.add(Root.COLUMN_DOCUMENT_ID, DEFAULT_DOCUMENT_ID);
         row.add(Root.COLUMN_ICON, R.drawable.ic_launcher);
 
-        // Notify user in storage UI when key isn't hardware-backed
-        if (!mHardwareBacked) {
-            row.add(Root.COLUMN_SUMMARY, getContext().getString(R.string.info_software));
-        }
+        row.add(Root.COLUMN_SUMMARY, "todo: display user id?");
 
         return result;
     }
 
     private EncryptedDocument getDocument(long docId) throws GeneralSecurityException {
-        return new EncryptedDocument(docId, mDocumentsDir);
+        return new EncryptedDocument(docId, mDocumentsDir, getContext(), mServiceConnection);
     }
 
     /**
@@ -314,6 +344,12 @@ public class VaultProvider extends DocumentsProvider {
             final JSONObject meta = new JSONObject();
             meta.put(Document.COLUMN_DOCUMENT_ID, docId);
             meta.put(Document.COLUMN_MIME_TYPE, mimeType);
+
+            // HACK: dirs have a special encrypted filename
+            if (Document.MIME_TYPE_DIR.equals(mimeType)) {
+                displayName = Document.MIME_TYPE_DIR;
+            }
+
             meta.put(Document.COLUMN_DISPLAY_NAME, displayName);
             if (Document.MIME_TYPE_DIR.equals(mimeType)) {
                 meta.put(KEY_CHILDREN, new JSONArray());
@@ -327,77 +363,76 @@ public class VaultProvider extends DocumentsProvider {
 
     @Override
     public void deleteDocument(String documentId) throws FileNotFoundException {
-        final long docId = Long.parseLong(documentId);
-
-        try {
-            // Delete given document, any children documents under it, and any
-            // references to it from parents.
-            deleteDocumentTree(docId);
-            deleteDocumentReferences(docId);
-
-        } catch (IOException e) {
-            throw new IllegalStateException(e);
-        } catch (GeneralSecurityException e) {
-            throw new IllegalStateException(e);
-        }
+//        final long docId = Long.parseLong(documentId);
+//
+//        try {
+//            // Delete given document, any children documents under it, and any
+//            // references to it from parents.
+//            deleteDocumentTree(docId);
+//            deleteDocumentReferences(docId);
+//
+//        } catch (IOException e) {
+//            throw new IllegalStateException(e);
+//        } catch (GeneralSecurityException e) {
+//            throw new IllegalStateException(e);
+//        }
     }
 
     /**
      * Recursively delete the given document and any children under it.
      */
-    private void deleteDocumentTree(long docId) throws IOException, GeneralSecurityException {
-        final EncryptedDocument doc = getDocument(docId);
-        final JSONObject meta = doc.readMetadata();
-        try {
-            if (Document.MIME_TYPE_DIR.equals(meta.getString(Document.COLUMN_MIME_TYPE))) {
-                final JSONArray children = meta.getJSONArray(KEY_CHILDREN);
-                for (int i = 0; i < children.length(); i++) {
-                    final long childDocId = children.getLong(i);
-                    deleteDocumentTree(childDocId);
-                }
-            }
-        } catch (JSONException e) {
-            throw new IOException(e);
-        }
-
-        if (!doc.getFile().delete()) {
-            throw new IOException("Failed to delete " + docId);
-        }
-    }
+//    private void deleteDocumentTree(long docId) throws IOException, GeneralSecurityException {
+//        final EncryptedDocument doc = getDocument(docId, getContext(), mServiceConnection);
+//        final JSONObject meta = doc.readMetadata(null);
+//        try {
+//            if (Document.MIME_TYPE_DIR.equals(meta.getString(Document.COLUMN_MIME_TYPE))) {
+//                final JSONArray children = meta.getJSONArray(KEY_CHILDREN);
+//                for (int i = 0; i < children.length(); i++) {
+//                    final long childDocId = children.getLong(i);
+//                    deleteDocumentTree(childDocId);
+//                }
+//            }
+//        } catch (JSONException e) {
+//            throw new IOException(e);
+//        }
+//
+//        if (!doc.getFile().delete()) {
+//            throw new IOException("Failed to delete " + docId);
+//        }
+//    }
 
     /**
      * Remove any references to the given document, usually when included as a
      * child of another directory.
      */
-    private void deleteDocumentReferences(long docId) {
-        for (String name : mDocumentsDir.list()) {
-            try {
-                final long parentDocId = Long.parseLong(name);
-                final EncryptedDocument parentDoc = getDocument(parentDocId);
-                final JSONObject meta = parentDoc.readMetadata();
-
-                if (Document.MIME_TYPE_DIR.equals(meta.getString(Document.COLUMN_MIME_TYPE))) {
-                    final JSONArray children = meta.getJSONArray(KEY_CHILDREN);
-                    if (maybeRemove(children, docId)) {
-                        Log.d(TAG, "Removed " + docId + " reference from " + name);
-                        parentDoc.writeMetadataAndContent(meta, null);
-
-                        getContext().getContentResolver().notifyChange(
-                                DocumentsContract.buildChildDocumentsUri(AUTHORITY, name), null,
-                                false);
-                    }
-                }
-            } catch (NumberFormatException ignored) {
-            } catch (IOException e) {
-                Log.w(TAG, "Failed to examine " + name, e);
-            } catch (GeneralSecurityException e) {
-                Log.w(TAG, "Failed to examine " + name, e);
-            } catch (JSONException e) {
-                Log.w(TAG, "Failed to examine " + name, e);
-            }
-        }
-    }
-
+//    private void deleteDocumentReferences(long docId) {
+//        for (String name : mDocumentsDir.list()) {
+//            try {
+//                final long parentDocId = Long.parseLong(name);
+//                final EncryptedDocument parentDoc = getDocument(parentDocId);
+//                final JSONObject meta = parentDoc.readMetadata();
+//
+//                if (Document.MIME_TYPE_DIR.equals(meta.getString(Document.COLUMN_MIME_TYPE))) {
+//                    final JSONArray children = meta.getJSONArray(KEY_CHILDREN);
+//                    if (maybeRemove(children, docId)) {
+//                        Log.d(TAG, "Removed " + docId + " reference from " + name);
+//                        parentDoc.writeMetadataAndContent(meta, null);
+//
+//                        getContext().getContentResolver().notifyChange(
+//                                DocumentsContract.buildChildDocumentsUri(AUTHORITY, name), null,
+//                                false);
+//                    }
+//                }
+//            } catch (NumberFormatException ignored) {
+//            } catch (IOException e) {
+//                Log.w(TAG, "Failed to examine " + name, e);
+//            } catch (GeneralSecurityException e) {
+//                Log.w(TAG, "Failed to examine " + name, e);
+//            } catch (JSONException e) {
+//                Log.w(TAG, "Failed to examine " + name, e);
+//            }
+//        }
+//    }
     @Override
     public Cursor queryDocument(String documentId, String[] projection)
             throws FileNotFoundException {
@@ -418,10 +453,10 @@ public class VaultProvider extends DocumentsProvider {
             throws FileNotFoundException {
 
 
-        Intent intent = new Intent("org.sufficientlysecure.keychain.action.ENCRYPT");
-        intent.putExtra("text", "hallo");
-        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        getContext().startActivity(intent);
+//        Intent intent = new Intent("org.sufficientlysecure.keychain.action.ENCRYPT");
+//        intent.putExtra("text", "hallo");
+//        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+//        getContext().startActivity(intent);
 
 
         final ExtrasMatrixCursor result = new ExtrasMatrixCursor(
@@ -430,10 +465,9 @@ public class VaultProvider extends DocumentsProvider {
                 DocumentsContract.buildChildDocumentsUri(AUTHORITY, parentDocumentId));
 
         // Notify user in storage UI when key isn't hardware-backed
-        if (!mHardwareBacked) {
-            result.putString(DocumentsContract.EXTRA_INFO,
-                    getContext().getString(R.string.info_software_detail));
-        }
+//        if (!mHardwareBacked) {
+        result.putString(DocumentsContract.EXTRA_INFO, "bla");
+//        }
 
         try {
             final EncryptedDocument doc = getDocument(Long.parseLong(parentDocumentId));
@@ -543,19 +577,19 @@ public class VaultProvider extends DocumentsProvider {
      *
      * @return if the array was mutated.
      */
-    private static boolean maybeRemove(JSONArray array, long value) throws JSONException {
-        boolean mutated = false;
-        int i = 0;
-        while (i < array.length()) {
-            if (value == array.getLong(i)) {
-                array.remove(i);
-                mutated = true;
-            } else {
-                i++;
-            }
-        }
-        return mutated;
-    }
+//    private static boolean maybeRemove(JSONArray array, long value) throws JSONException {
+//        boolean mutated = false;
+//        int i = 0;
+//        while (i < array.length()) {
+//            if (value == array.getLong(i)) {
+//                array.remove(i);
+//                mutated = true;
+//            } else {
+//                i++;
+//            }
+//        }
+//        return mutated;
+//    }
 
     /**
      * Simple extension of {@link MatrixCursor} that makes it easy to provide a
