@@ -18,15 +18,23 @@ package org.sufficientlysecure.privacybox;
 
 import static org.sufficientlysecure.privacybox.VaultProvider.TAG;
 
+import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentSender;
 import android.database.MatrixCursor;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Message;
+import android.os.Messenger;
 import android.os.ParcelFileDescriptor;
+import android.os.RemoteException;
 import android.provider.DocumentsContract.Document;
 import android.util.Log;
 
 import org.json.JSONException;
 import org.json.JSONObject;
+import org.openintents.openpgp.OpenPgpError;
 import org.openintents.openpgp.OpenPgpMetadata;
 import org.openintents.openpgp.util.OpenPgpApi;
 import org.openintents.openpgp.util.OpenPgpServiceConnection;
@@ -118,6 +126,7 @@ public class EncryptedDocument {
 
         mServiceConnection = serviceConnection;
         mContext = context;
+
 
 //        if (dataKey.getEncoded().length != DATA_KEY_LENGTH) {
 //            throw new IllegalArgumentException("Expected data key length " + DATA_KEY_LENGTH);
@@ -247,9 +256,13 @@ public class EncryptedDocument {
 
 //        RandomAccessFile f = new RandomAccessFile(tempFile, "rw");
         try {
+
+
+            // TODO: WHILE NOT RESULT_CODE_SUCCESS wait notify and stuff...
             Intent data = new Intent();
             data.setAction(OpenPgpApi.ACTION_SIGN_AND_ENCRYPT);
-            data.putExtra(OpenPgpApi.EXTRA_USER_IDS, "nopass@example.com");
+            data.putExtra(OpenPgpApi.EXTRA_ORIGINAL_FILENAME, meta.getString(Document.COLUMN_DISPLAY_NAME));
+            data.putExtra(OpenPgpApi.EXTRA_USER_IDS, new String[]{"nopass@example.com"});
             data.putExtra(OpenPgpApi.EXTRA_ACCOUNT_NAME, "default");
             OpenPgpApi api = new OpenPgpApi(mContext, mServiceConnection.getService());
 
@@ -261,6 +274,50 @@ public class EncryptedDocument {
                 is = new FileInputStream(contentIn.getFileDescriptor());
             }
             Intent result = api.executeApi(data, is, new FileOutputStream(tempFile));
+
+            switch (result.getIntExtra(OpenPgpApi.RESULT_CODE, OpenPgpApi.RESULT_CODE_ERROR)) {
+                case OpenPgpApi.RESULT_CODE_SUCCESS: {
+                    Log.d(VaultProvider.TAG, "writeMetadataAndContent RESULT_CODE_SUCCESS");
+
+                    tempFile.renameTo(mFile);
+
+                    break;
+                }
+                case OpenPgpApi.RESULT_CODE_USER_INTERACTION_REQUIRED: {
+                    Log.d(VaultProvider.TAG, "writeMetadataAndContent RESULT_CODE_USER_INTERACTION_REQUIRED");
+
+                    // directly try again, something different needs user interaction again...
+                    PendingIntent pi = result.getParcelableExtra(OpenPgpApi.RESULT_INTENT);
+
+                    Handler handler = new Handler(mContext.getMainLooper(), new Handler.Callback() {
+                        @Override
+                        public boolean handleMessage(Message msg) {
+                            Log.d(VaultProvider.TAG, "writeMetadataAndContent handleMessage");
+
+                            // TODO: start again afterwards!!!
+                            return true;
+                        }
+                    });
+                    Messenger messenger = new Messenger(handler);
+
+                    // start proxy activity and wait here for it finishing...
+                    Intent proxy = new Intent(mContext, KeychainProxyActivity.class);
+                    proxy.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    proxy.putExtra(KeychainProxyActivity.EXTRA_MESSENGER, messenger);
+                    proxy.putExtra(KeychainProxyActivity.EXTRA_PENDING_INTENT, pi);
+
+                    mContext.startActivity(proxy);
+                    break;
+                }
+                case OpenPgpApi.RESULT_CODE_ERROR: {
+                    Log.d(VaultProvider.TAG, "writeMetadataAndContent RESULT_CODE_ERROR");
+
+                    // TODO
+                    OpenPgpError error = result.getParcelableExtra(OpenPgpApi.RESULT_ERROR);
+//                handleError(error);
+                    break;
+                }
+            }
 
             // Truncate any existing data
 //            f.setLength(0);
@@ -297,10 +354,9 @@ public class EncryptedDocument {
             // fsync() before close would be overkill, since rename() is an
             // atomic barrier.
 //            f.close();
-            tempFile.renameTo(mFile);
 
-//        } catch (JSONException e) {
-//            throw new IOException(e);
+        } catch (JSONException e) {
+            throw new IOException(e);
         } finally {
             // Regardless of what happens, always try cleaning up.
 //            f.close();
