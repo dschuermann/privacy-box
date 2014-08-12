@@ -32,6 +32,7 @@ import android.os.RemoteException;
 import android.provider.DocumentsContract.Document;
 import android.util.Log;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.openintents.openpgp.OpenPgpError;
@@ -48,6 +49,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.RandomAccessFile;
+import java.lang.reflect.Constructor;
 import java.net.ProtocolException;
 import java.nio.charset.StandardCharsets;
 import java.security.DigestException;
@@ -63,49 +65,12 @@ import javax.crypto.spec.IvParameterSpec;
  * Represents a single encrypted document stored on disk. Handles encryption,
  * decryption, and authentication of the document when requested.
  * <p/>
- * Encrypted documents are stored on disk as a magic number, followed by an
- * encrypted metadata section, followed by an encrypted content section. The
- * content section always starts at a specific offset {@link #CONTENT_OFFSET} to
- * allow metadata updates without rewriting the entire file.
- * <p/>
- * Each section is encrypted using AES-128 with a random IV, and authenticated
- * with SHA-256. Data encrypted and authenticated like this can be safely stored
- * on untrusted storage devices, as long as the keys are stored securely.
- * <p/>
  * Not inherently thread safe.
  */
 public class EncryptedDocument {
 
-    /**
-     * Magic number to identify file; "AVLT".
-     */
-    private static final int MAGIC_NUMBER = 0x41564c54;
-
-    /**
-     * Offset in file at which content section starts. Magic and metadata
-     * section must fully fit before this offset.
-     */
-    private static final int CONTENT_OFFSET = 4096;
-
-    private static final boolean DEBUG_METADATA = true;
-
-    /**
-     * Key length for AES-128
-     */
-    public static final int DATA_KEY_LENGTH = 16;
-    /**
-     * Key length for SHA-256
-     */
-    public static final int MAC_KEY_LENGTH = 32;
-
-    private final SecureRandom mRandom;
-    private final Cipher mCipher;
-    private final Mac mMac;
-
     private final long mDocId;
     private final File mFile;
-//    private final SecretKey mDataKey;
-//    private final SecretKey mMacKey;
 
     OpenPgpServiceConnection mServiceConnection;
     Context mContext;
@@ -120,25 +85,11 @@ public class EncryptedDocument {
      */
     public EncryptedDocument(long docId, File directory, Context context, OpenPgpServiceConnection serviceConnection)
             throws GeneralSecurityException {
-        mRandom = new SecureRandom();
-        mCipher = Cipher.getInstance("AES/CTR/NoPadding");
-        mMac = Mac.getInstance("HmacSHA256");
-
         mServiceConnection = serviceConnection;
         mContext = context;
 
-
-//        if (dataKey.getEncoded().length != DATA_KEY_LENGTH) {
-//            throw new IllegalArgumentException("Expected data key length " + DATA_KEY_LENGTH);
-//        }
-//        if (macKey.getEncoded().length != MAC_KEY_LENGTH) {
-//            throw new IllegalArgumentException("Expected MAC key length " + MAC_KEY_LENGTH);
-//        }
-
         mDocId = docId;
         mFile = new File(directory, String.valueOf(docId) + ".gpg");
-//        mDataKey = dataKey;
-//        mMacKey = macKey;
     }
 
     public File getFile() {
@@ -167,34 +118,99 @@ public class EncryptedDocument {
             OpenPgpApi api = new OpenPgpApi(mContext, mServiceConnection.getService());
             Intent result = api.executeApi(data, fis, null);
 
-            // TODO: better handling of errors
-            OpenPgpMetadata openPgpMeta;
-            if (result.hasExtra(OpenPgpApi.RESULT_METADATA)) {
-                openPgpMeta = result.getParcelableExtra(OpenPgpApi.RESULT_METADATA);
-            } else {
-                throw new IOException();
+            switch (result.getIntExtra(OpenPgpApi.RESULT_CODE, OpenPgpApi.RESULT_CODE_ERROR)) {
+                case OpenPgpApi.RESULT_CODE_SUCCESS: {
+                    Log.d(VaultProvider.TAG, "readMetadata RESULT_CODE_SUCCESS");
+
+//                    tempFile.renameTo(mFile);
+
+
+                    // TODO: better handling of errors
+                    OpenPgpMetadata openPgpMeta;
+                    if (result.hasExtra(OpenPgpApi.RESULT_METADATA)) {
+                        openPgpMeta = result.getParcelableExtra(OpenPgpApi.RESULT_METADATA);
+                    } else {
+                        throw new IOException();
+                    }
+
+                    Log.d(TAG, "metadata for " + mDocId + ": " + openPgpMeta);
+
+                    String filenameHeader = openPgpMeta.getFilename();
+                    long size = openPgpMeta.getOriginalSize();
+                    long modTime = openPgpMeta.getModificationTime();
+
+                    final JSONObject meta = new JSONObject();
+
+                    /*
+                     * If the filename header of the encrypted pgp file contains
+                     * JSON, we are dealing with a directory.
+                     * Instead of the actual filename, directories include JSON encoded mime type
+                     * and an array of all child documents.
+                     */
+                    if (filenameHeader.contains("{")) { // JSON with high probability
+                        meta.put(Document.COLUMN_MIME_TYPE, Document.MIME_TYPE_DIR);
+
+                        JSONObject json = new JSONObject(filenameHeader);
+                        final String name = json.getString(Document.COLUMN_DISPLAY_NAME);
+                        final JSONArray children = json.getJSONArray(VaultProvider.KEY_CHILDREN);
+
+                        Log.d(VaultProvider.TAG, "json from filename header: " + json);
+                        Log.d(VaultProvider.TAG, "name: " + name);
+                        Log.d(VaultProvider.TAG, "children: " + children);
+
+                        meta.put(Document.COLUMN_DISPLAY_NAME, name);
+                        meta.put(VaultProvider.KEY_CHILDREN, children);
+                    } else {
+                        String mimeType = openPgpMeta.getMimeType();
+                        meta.put(Document.COLUMN_MIME_TYPE, mimeType);
+
+                        meta.put(Document.COLUMN_DISPLAY_NAME, filenameHeader);
+                    }
+                    meta.put(Document.COLUMN_DOCUMENT_ID, mDocId);
+                    meta.put(Document.COLUMN_SIZE, size);
+                    meta.put(Document.COLUMN_LAST_MODIFIED, modTime);
+
+                    return meta;
+                }
+                case OpenPgpApi.RESULT_CODE_USER_INTERACTION_REQUIRED: {
+                    Log.d(VaultProvider.TAG, "readMetadata RESULT_CODE_USER_INTERACTION_REQUIRED");
+
+                    // directly try again, something different needs user interaction again...
+                    PendingIntent pi = result.getParcelableExtra(OpenPgpApi.RESULT_INTENT);
+
+                    Handler handler = new Handler(mContext.getMainLooper(), new Handler.Callback() {
+                        @Override
+                        public boolean handleMessage(Message msg) {
+                            Log.d(VaultProvider.TAG, "writeMetadataAndContent handleMessage");
+
+                            // TODO: start again afterwards!!!
+                            return true;
+                        }
+                    });
+                    Messenger messenger = new Messenger(handler);
+
+                    // start proxy activity and wait here for it finishing...
+                    Intent proxy = new Intent(mContext, KeychainProxyActivity.class);
+                    proxy.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    proxy.putExtra(KeychainProxyActivity.EXTRA_MESSENGER, messenger);
+                    proxy.putExtra(KeychainProxyActivity.EXTRA_PENDING_INTENT, pi);
+
+                    mContext.startActivity(proxy);
+                    break;
+                }
+                case OpenPgpApi.RESULT_CODE_ERROR: {
+                    Log.d(VaultProvider.TAG, "readMetadata RESULT_CODE_ERROR");
+
+                    // TODO
+                    OpenPgpError error = result.getParcelableExtra(OpenPgpApi.RESULT_ERROR);
+                    Log.e(VaultProvider.TAG, "error: " + error.getMessage());
+
+//                handleError(error);
+                    break;
+                }
             }
 
-            Log.d(TAG, "metadata for " + mDocId + ": " + openPgpMeta);
-
-            String mimeType = openPgpMeta.getMimeType();
-            String filename = openPgpMeta.getFilename();
-            long size = openPgpMeta.getOriginalSize();
-            long modTime = openPgpMeta.getModificationTime();
-
-            // HACK: dirs have a special encrypted filename
-            if (Document.MIME_TYPE_DIR.equals(filename)) {
-                mimeType = Document.MIME_TYPE_DIR;
-            }
-
-            final JSONObject meta = new JSONObject();
-            meta.put(Document.COLUMN_DOCUMENT_ID, mDocId);
-            meta.put(Document.COLUMN_DISPLAY_NAME, filename);
-            meta.put(Document.COLUMN_MIME_TYPE, mimeType);
-            meta.put(Document.COLUMN_SIZE, size);
-            meta.put(Document.COLUMN_LAST_MODIFIED, modTime);
-
-            return meta;
+            return null;
         } catch (JSONException e) {
             throw new IOException(e);
         } finally {
@@ -258,21 +274,43 @@ public class EncryptedDocument {
         try {
 
 
-            // TODO: WHILE NOT RESULT_CODE_SUCCESS wait notify and stuff...
+            // TODO: while not == RESULT_CODE_SUCCESS wait notify and stuff...
+            // make this blocking!
             Intent data = new Intent();
             data.setAction(OpenPgpApi.ACTION_SIGN_AND_ENCRYPT);
-            data.putExtra(OpenPgpApi.EXTRA_ORIGINAL_FILENAME, meta.getString(Document.COLUMN_DISPLAY_NAME));
-            data.putExtra(OpenPgpApi.EXTRA_USER_IDS, new String[]{"nopass@example.com"});
-            data.putExtra(OpenPgpApi.EXTRA_ACCOUNT_NAME, "default");
-            OpenPgpApi api = new OpenPgpApi(mContext, mServiceConnection.getService());
 
             InputStream is;
-            if (contentIn == null) {
-                // just a directory
-                is = new ByteArrayInputStream("directory".getBytes());
+            String mimeType = meta.getString(Document.COLUMN_MIME_TYPE);
+            if (Document.MIME_TYPE_DIR.equals(mimeType)) {
+                // this is a directory! write only dir into content...
+                is = new ByteArrayInputStream("dir".getBytes());
+
+                /*
+                  * combine mime type, display name, and children into one json!
+                  */
+                JSONObject json = new JSONObject();
+                json.put(Document.COLUMN_MIME_TYPE, Document.MIME_TYPE_DIR);
+                json.put(Document.COLUMN_DISPLAY_NAME, meta.getString(Document.COLUMN_DISPLAY_NAME));
+                json.put(VaultProvider.KEY_CHILDREN, meta.getJSONArray(VaultProvider.KEY_CHILDREN));
+
+                Log.d(VaultProvider.TAG, "json: " + json.toString());
+
+                // write json into
+                data.putExtra(OpenPgpApi.EXTRA_ORIGINAL_FILENAME, json.toString());
             } else {
                 is = new FileInputStream(contentIn.getFileDescriptor());
+
+                // TODO: no possibility to write mime type to pgp header, currently
+                data.putExtra(OpenPgpApi.EXTRA_ORIGINAL_FILENAME, meta.getString(Document.COLUMN_DISPLAY_NAME));
             }
+
+
+            data.putExtra(OpenPgpApi.EXTRA_USER_IDS, new String[]{"nopass@example.com"});
+            data.putExtra(OpenPgpApi.EXTRA_ACCOUNT_NAME, "default");
+            data.putExtra(OpenPgpApi.EXTRA_REQUEST_ASCII_ARMOR, true); // TODO: fix later to false!
+            OpenPgpApi api = new OpenPgpApi(mContext, mServiceConnection.getService());
+
+
             Intent result = api.executeApi(data, is, new FileOutputStream(tempFile));
 
             switch (result.getIntExtra(OpenPgpApi.RESULT_CODE, OpenPgpApi.RESULT_CODE_ERROR)) {
@@ -314,7 +352,7 @@ public class EncryptedDocument {
 
                     // TODO
                     OpenPgpError error = result.getParcelableExtra(OpenPgpApi.RESULT_ERROR);
-//                handleError(error);
+                    Log.e(VaultProvider.TAG, "error: " + error.getMessage());
                     break;
                 }
             }
@@ -502,126 +540,4 @@ public class EncryptedDocument {
 //        }
 //    }
 
-
-//    private class MyCallback implements OpenPgpApi.IOpenPgpCallback {
-//        boolean returnToCiphertextField;
-//        ByteArrayOutputStream os;
-//        int requestCode;
-//
-//        private MyCallback(boolean returnToCiphertextField, ByteArrayOutputStream os, int requestCode) {
-//            this.returnToCiphertextField = returnToCiphertextField;
-//            this.os = os;
-//            this.requestCode = requestCode;
-//        }
-//
-//        @Override
-//        public void onReturn(Intent result) {
-//            switch (result.getIntExtra(OpenPgpApi.RESULT_CODE, OpenPgpApi.RESULT_CODE_ERROR)) {
-//                case OpenPgpApi.RESULT_CODE_SUCCESS: {
-//                    showToast("RESULT_CODE_SUCCESS");
-//// encrypt/decrypt/sign/verify
-//                    if (os != null) {
-//                        try {
-//                            Log.d(OpenPgpApi.TAG, "result: " + os.toByteArray().length
-//                                    + " str=" + os.toString("UTF-8"));
-//                            if (returnToCiphertextField) {
-//                                mCiphertext.setText(os.toString("UTF-8"));
-//                            } else {
-//                                mMessage.setText(os.toString("UTF-8"));
-//                            }
-//                        } catch (UnsupportedEncodingException e) {
-//                            Log.e(Constants.TAG, "UnsupportedEncodingException", e);
-//                        }
-//                    }
-//// verify
-//                    if (result.hasExtra(OpenPgpApi.RESULT_SIGNATURE)) {
-//                        OpenPgpSignatureResult sigResult
-//                                = result.getParcelableExtra(OpenPgpApi.RESULT_SIGNATURE);
-//                        showToast(sigResult.toString());
-//                    }
-//// get key ids
-//                    if (result.hasExtra(OpenPgpApi.RESULT_KEY_IDS)) {
-//                        long[] keyIds = result.getLongArrayExtra(OpenPgpApi.RESULT_KEY_IDS);
-//                        String out = "keyIds: ";
-//                        for (int i = 0; i < keyIds.length; i++) {
-//                            out += OpenPgpUtils.convertKeyIdToHex(keyIds[i]) + ", ";
-//                        }
-//                        showToast(out);
-//                    }
-//                    break;
-//                }
-//                case OpenPgpApi.RESULT_CODE_USER_INTERACTION_REQUIRED: {
-//                    showToast("RESULT_CODE_USER_INTERACTION_REQUIRED");
-//                    PendingIntent pi = result.getParcelableExtra(OpenPgpApi.RESULT_INTENT);
-//                    try {
-//                        OpenPgpProviderActivity.this.startIntentSenderForResult(pi.getIntentSender(),
-//                                requestCode, null, 0, 0, 0);
-//                    } catch (IntentSender.SendIntentException e) {
-//                        Log.e(Constants.TAG, "SendIntentException", e);
-//                    }
-//                    break;
-//                }
-//                case OpenPgpApi.RESULT_CODE_ERROR: {
-//                    showToast("RESULT_CODE_ERROR");
-//                    OpenPgpError error = result.getParcelableExtra(OpenPgpApi.RESULT_ERROR);
-//                    handleError(error);
-//                    break;
-//                }
-//            }
-//        }
-//    }
-
-//    public void sign(Intent data, InputStream is) {
-//        data.setAction(OpenPgpApi.ACTION_SIGN);
-//        data.putExtra(OpenPgpApi.EXTRA_REQUEST_ASCII_ARMOR, true);
-//        data.putExtra(OpenPgpApi.EXTRA_ACCOUNT_NAME, "default");
-//        ByteArrayOutputStream os = new ByteArrayOutputStream();
-//        OpenPgpApi api = new OpenPgpApi(this, mServiceConnection.getService());
-//        api.executeApiAsync(data, is, os, new MyCallback(true, os, REQUEST_CODE_SIGN));
-//    }
-//
-//    public void encrypt(Intent data, InputStream is) {
-//        data.setAction(OpenPgpApi.ACTION_ENCRYPT);
-////        data.putExtra(OpenPgpApi.EXTRA_USER_IDS, mEncryptUserIds.getText().toString().split(","));
-//        data.putExtra(OpenPgpApi.EXTRA_REQUEST_ASCII_ARMOR, true);
-//        data.putExtra(OpenPgpApi.EXTRA_ACCOUNT_NAME, "default");
-//        ByteArrayOutputStream os = new ByteArrayOutputStream();
-//        OpenPgpApi api = new OpenPgpApi(this, mServiceConnection.getService());
-//        api.executeApiAsync(data, is, os, new MyCallback(true, os, REQUEST_CODE_ENCRYPT));
-//    }
-//
-//    public void signAndEncrypt(Intent data, InputStream is) {
-//        data.setAction(OpenPgpApi.ACTION_SIGN_AND_ENCRYPT);
-//        data.putExtra(OpenPgpApi.EXTRA_USER_IDS, mEncryptUserIds.getText().toString().split(","));
-//        data.putExtra(OpenPgpApi.EXTRA_REQUEST_ASCII_ARMOR, true);
-//        data.putExtra(OpenPgpApi.EXTRA_ACCOUNT_NAME, "default");
-//        ByteArrayOutputStream os = new ByteArrayOutputStream();
-//        OpenPgpApi api = new OpenPgpApi(this, mServiceConnection.getService());
-//        api.executeApiAsync(data, is, os, new MyCallback(true, os, REQUEST_CODE_SIGN_AND_ENCRYPT));
-//    }
-//
-//    public void decryptAndVerify(Intent data, InputStream is) {
-//        data.setAction(OpenPgpApi.ACTION_DECRYPT_VERIFY);
-//        data.putExtra(OpenPgpApi.EXTRA_REQUEST_ASCII_ARMOR, true);
-//        data.putExtra(OpenPgpApi.EXTRA_ACCOUNT_NAME, "default");
-//        ByteArrayOutputStream os = new ByteArrayOutputStream();
-//        OpenPgpApi api = new OpenPgpApi(this, mServiceConnection.getService());
-//        api.executeApiAsync(data, is, os, new MyCallback(false, os, REQUEST_CODE_DECRYPT_AND_VERIFY));
-//    }
-
-//    public void getKey(Intent data) {
-//        data.setAction(OpenPgpApi.ACTION_GET_KEY);
-//        data.putExtra(OpenPgpApi.EXTRA_ACCOUNT_NAME, mAccount.getText().toString());
-//        data.putExtra(OpenPgpApi.EXTRA_KEY_ID, Long.decode(mGetKeyEdit.getText().toString()));
-//        OpenPgpApi api = new OpenPgpApi(this, mServiceConnection.getService());
-//        api.executeApiAsync(data, null, null, new MyCallback(false, null, REQUEST_CODE_GET_KEY));
-//    }
-//
-//    public void getKeyIds(Intent data) {
-//        data.setAction(OpenPgpApi.ACTION_GET_KEY_IDS);
-//        data.putExtra(OpenPgpApi.EXTRA_ACCOUNT_NAME, mAccount.getText().toString());
-//        data.putExtra(OpenPgpApi.EXTRA_USER_IDS, mGetKeyIdsEdit.getText().toString().split(","));
-//        OpenPgpApi api = new OpenPgpApi(this, mServiceConnection.getService());
-//        api.executeApiAsync(data, null, null, new MyCallback(false, null, REQUEST_CODE_GET_KEY_IDS));
-//    }
 }

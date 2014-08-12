@@ -16,49 +16,34 @@
 
 package org.sufficientlysecure.privacybox;
 
-import static org.sufficientlysecure.privacybox.EncryptedDocument.DATA_KEY_LENGTH;
-import static org.sufficientlysecure.privacybox.EncryptedDocument.MAC_KEY_LENGTH;
-import static org.sufficientlysecure.privacybox.Utils.closeQuietly;
-import static org.sufficientlysecure.privacybox.Utils.closeWithErrorQuietly;
-import static org.sufficientlysecure.privacybox.Utils.readFully;
-import static org.sufficientlysecure.privacybox.Utils.writeFully;
-
 import android.content.Context;
-import android.content.Intent;
 import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.database.MatrixCursor.RowBuilder;
 import android.os.Bundle;
 import android.os.CancellationSignal;
-import android.os.Handler;
 import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
 import android.provider.DocumentsContract.Document;
 import android.provider.DocumentsContract.Root;
 import android.provider.DocumentsProvider;
-import android.security.KeyChain;
 import android.util.Log;
 
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.openintents.openpgp.IOpenPgpService;
-import org.openintents.openpgp.OpenPgpMetadata;
 import org.openintents.openpgp.util.OpenPgpServiceConnection;
 
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.KeyStore;
-import java.security.SecureRandom;
-import java.util.concurrent.Semaphore;
 
-import javax.crypto.Mac;
-import javax.crypto.SecretKey;
-import javax.crypto.spec.SecretKeySpec;
+import static org.sufficientlysecure.privacybox.Utils.closeQuietly;
+import static org.sufficientlysecure.privacybox.Utils.closeWithErrorQuietly;
 
 /**
  * Provider that encrypts both metadata and contents of documents stored inside.
@@ -90,7 +75,7 @@ public class VaultProvider extends DocumentsProvider {
     /**
      * JSON key storing array of all children documents in a directory.
      */
-    private static final String KEY_CHILDREN = "privacybox:children";
+    public static final String KEY_CHILDREN = "privacybox:children";
 
     /**
      * Key pointing to next available document ID.
@@ -165,10 +150,8 @@ public class VaultProvider extends DocumentsProvider {
                         Log.d(TAG, "onBound");
 
                         try {
-                            // Load secret key and ensure our root document is ready.
-                            //loadOrGenerateKeys(getContext(), mKeyFile);
-                            initDocument(Long.parseLong(DEFAULT_DOCUMENT_ID), Document.MIME_TYPE_DIR, null);
-
+                            // ensure that our root document is ready.
+                            initDocument(Long.parseLong(DEFAULT_DOCUMENT_ID), Document.MIME_TYPE_DIR, "root");
                         } catch (IOException e) {
                             throw new IllegalStateException(e);
                         } catch (GeneralSecurityException e) {
@@ -344,13 +327,8 @@ public class VaultProvider extends DocumentsProvider {
             final JSONObject meta = new JSONObject();
             meta.put(Document.COLUMN_DOCUMENT_ID, docId);
             meta.put(Document.COLUMN_MIME_TYPE, mimeType);
-
-            // HACK: dirs have a special encrypted filename
-            if (Document.MIME_TYPE_DIR.equals(mimeType)) {
-                displayName = Document.MIME_TYPE_DIR;
-            }
-
             meta.put(Document.COLUMN_DISPLAY_NAME, displayName);
+
             if (Document.MIME_TYPE_DIR.equals(mimeType)) {
                 meta.put(KEY_CHILDREN, new JSONArray());
             }
@@ -466,7 +444,9 @@ public class VaultProvider extends DocumentsProvider {
 
         // Notify user in storage UI when key isn't hardware-backed
 //        if (!mHardwareBacked) {
-        result.putString(DocumentsContract.EXTRA_INFO, "bla");
+
+        // TODO: not for special root folder!
+//        result.putString(DocumentsContract.EXTRA_INFO, "bla");
 //        }
 
         try {
