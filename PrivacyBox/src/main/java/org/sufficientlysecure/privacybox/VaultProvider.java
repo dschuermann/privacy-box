@@ -405,65 +405,74 @@ public class VaultProvider extends DocumentsProvider {
         try {
             final EncryptedDocument doc = getDocument(docId);
 
-            JSONObject meta = doc.readMetadata();
-            String filename = "no filename";
-            try {
-                filename = meta.getString(Document.COLUMN_DISPLAY_NAME);
-            } catch (JSONException e) {
-                Log.e(TAG, "JSONException getting filename", e);
-            }
-
-            openResult = -1;
-            Handler handler = new Handler(Looper.getMainLooper(), new Handler.Callback() {
-                @Override
-                public boolean handleMessage(Message msg) {
-                    synchronized (mUILock) {
-                        openResult = msg.what;
-                        mUILock.notify();
-                    }
-                    return true;
-                }
-            });
-
-            // start dialog activity and wait here for it finishing...
-            Intent dialog = new Intent(getContext(), OpenDialogActivity.class);
-            dialog.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            dialog.putExtra(OpenDialogActivity.EXTRA_MESSENGER, new Messenger(handler));
-            dialog.putExtra(OpenDialogActivity.EXTRA_FILENAME, filename);
-
-            getContext().startActivity(dialog);
-
-            Log.d(TAG, "mUILock.wait");
-            synchronized (mUILock) {
-                try {
-                    mUILock.wait();
-                } catch (InterruptedException e) {
-                    Log.e(TAG, "interrupt", e);
-                }
-            }
-            Log.d(TAG, "after mUILock.wait");
-            
-            Log.d(TAG, "openResult:" + openResult);
-            switch (openResult) {
-                case OpenDialogActivity.MSG_CANCEL:
-                    Log.d(TAG, "MSG_CANCEL");
-                    break;
-                case OpenDialogActivity.MSG_DECRYPT_OPEN:
-                    Log.d(TAG, "MSG_DECRYPT_OPEN");
-                    break;
-                case OpenDialogActivity.MSG_GET_ENCRYPTED:
-                    Log.d(TAG, "MSG_GET_ENCRYPTED");
-                    break;
-                default:
-                    Log.e(TAG, "should not happen");
-                    break;
-            }
-//            signal.cancel();
-
-
             if ("r".equals(mode)) {
-                return startRead(doc);
+                /*
+                 * READ MODE
+                 */
+
+                JSONObject meta = doc.readMetadata();
+                String filename = "no filename";
+                try {
+                    filename = meta.getString(Document.COLUMN_DISPLAY_NAME);
+                } catch (JSONException e) {
+                    Log.e(TAG, "JSONException getting filename", e);
+                }
+
+                openResult = -1;
+                Handler handler = new Handler(Looper.getMainLooper(), new Handler.Callback() {
+                    @Override
+                    public boolean handleMessage(Message msg) {
+                        synchronized (mUILock) {
+                            openResult = msg.what;
+                            mUILock.notify();
+                        }
+                        return true;
+                    }
+                });
+
+                // start dialog activity and wait here for it finishing...
+                Intent dialog = new Intent(getContext(), OpenDialogActivity.class);
+                dialog.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                dialog.putExtra(OpenDialogActivity.EXTRA_MESSENGER, new Messenger(handler));
+                dialog.putExtra(OpenDialogActivity.EXTRA_FILENAME, filename);
+
+                getContext().startActivity(dialog);
+
+                Log.d(TAG, "mUILock.wait");
+                synchronized (mUILock) {
+                    try {
+                        mUILock.wait();
+                    } catch (InterruptedException e) {
+                        Log.e(TAG, "interrupt", e);
+                    }
+                }
+                Log.d(TAG, "after mUILock.wait");
+
+                Log.d(TAG, "openResult:" + openResult);
+                switch (openResult) {
+                    case OpenDialogActivity.MSG_DECRYPT_OPEN:
+                        Log.d(TAG, "MSG_DECRYPT_OPEN");
+                        
+                        // TODO
+                        return startRead(doc);
+                    case OpenDialogActivity.MSG_GET_ENCRYPTED:
+                        Log.d(TAG, "MSG_GET_ENCRYPTED");
+
+                        // TODO
+                        return startRead(doc);
+                    case OpenDialogActivity.MSG_CANCEL:
+                        Log.d(TAG, "MSG_CANCEL");
+                        return null;
+                    default:
+                        Log.e(TAG, "should not happen");
+                        return null;
+                }
+
             } else if ("w".equals(mode) || "wt".equals(mode)) {
+                /*
+                 * WRITE MODE
+                 */
+
                 return startWrite(doc);
             } else {
                 throw new IllegalArgumentException("Unsupported mode: " + mode);

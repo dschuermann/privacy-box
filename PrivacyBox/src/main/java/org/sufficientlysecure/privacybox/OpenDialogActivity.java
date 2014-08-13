@@ -121,7 +121,6 @@ public class OpenDialogActivity extends Activity {
             super.onDismiss(dialog);
             Log.d(VaultProvider.TAG, "onDismiss");
 
-            // hide keyboard on dismiss
             getActivity().finish();
         }
 
