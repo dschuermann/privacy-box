@@ -1,22 +1,25 @@
 /*
- * Copyright (C) 2013 The Android Open Source Project
+ * Copyright (C) 2014 Dominik Schürmann <dominik@dominikschuermann.de>
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 package org.sufficientlysecure.privacybox;
 
+import android.app.AlertDialog;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.database.MatrixCursor;
@@ -55,14 +58,6 @@ import static org.sufficientlysecure.privacybox.Utils.closeWithErrorQuietly;
  * All content is encrypted/decrypted on demand through pipes, using
  * {@link ParcelFileDescriptor#createReliablePipe()} to detect and recover from
  * remote crashes and errors.
- * <p/>
- * Our symmetric encryption key is stored on disk only after using
- * {@link SecretKeyWrapper} to "wrap" it using another public/private key pair
- * stored in the platform {@link KeyStore}. This allows us to protect our
- * symmetric key with hardware-backed keys, if supported. Devices without
- * hardware support still encrypt their keys while at rest, and the platform
- * always requires a user to present a PIN, password, or pattern to unlock the
- * KeyStore before use.
  */
 public class VaultProvider extends DocumentsProvider {
     public static final String TAG = "PrivacyBox";
@@ -81,15 +76,6 @@ public class VaultProvider extends DocumentsProvider {
      * Key pointing to next available document ID.
      */
     private static final String PREF_NEXT_ID = "next_id";
-
-//    /**
-//     * Blob used to derive {@link #mDataKey} from our secret key.
-//     */
-//    private static final byte[] BLOB_DATA = "DATA".getBytes(StandardCharsets.UTF_8);
-//    /**
-//     * Blob used to derive {@link #mMacKey} from our secret key.
-//     */
-//    private static final byte[] BLOB_MAC = "MAC".getBytes(StandardCharsets.UTF_8);
 
     private static final String[] DEFAULT_ROOT_PROJECTION = new String[]{
             Root.COLUMN_ROOT_ID, Root.COLUMN_FLAGS, Root.COLUMN_ICON, Root.COLUMN_TITLE,
@@ -116,17 +102,6 @@ public class VaultProvider extends DocumentsProvider {
 
     private static final String OPEN_KEYCHAIN_PACKAGE = "org.sufficientlysecure.keychain";
 
-//    /**
-//     * Flag indicating that the {@link SecretKeyWrapper} public/private key is
-//     * hardware-backed. A software keystore is more vulnerable to offline
-//     * attacks if the device is compromised.
-//     */
-//    private boolean mHardwareBacked;
-
-//    /**
-//     * File where wrapped symmetric key is stored.
-//     */
-//    private File mKeyFile;
     /**
      * Directory where all encrypted documents are stored.
      */
@@ -138,8 +113,6 @@ public class VaultProvider extends DocumentsProvider {
 
         mDocumentsDir = new File(getContext().getFilesDir(), "documents");
         mDocumentsDir.mkdirs();
-
-//        Handler mainHandler = new Handler(getContext().getMainLooper());
 
         mServiceConnection = new OpenPgpServiceConnection(
                 getContext(),
@@ -182,52 +155,12 @@ public class VaultProvider extends DocumentsProvider {
     /**
      * Used for testing.
      */
-//    void wipeAllContents() throws IOException, GeneralSecurityException {
-//        for (File f : mDocumentsDir.listFiles()) {
-//            f.delete();
-//        }
-//
-//        initDocument(Long.parseLong(DEFAULT_DOCUMENT_ID), Document.MIME_TYPE_DIR, null);
-//    }
+    void wipeAllContents() throws IOException, GeneralSecurityException {
+        for (File f : mDocumentsDir.listFiles()) {
+            f.delete();
+        }
+    }
 
-    /**
-     * Load our symmetric secret key and use it to derive two different data and
-     * MAC keys. The symmetric secret key is stored securely on disk by wrapping
-     * it with a public/private key pair, possibly backed by hardware.
-     */
-//    private void loadOrGenerateKeys(Context context, File keyFile)
-//            throws GeneralSecurityException, IOException {
-//        final SecretKeyWrapper wrapper = new SecretKeyWrapper(context, TAG);
-//
-//        // Generate secret key if none exists
-//        if (!keyFile.exists()) {
-//            final byte[] raw = new byte[DATA_KEY_LENGTH];
-//            new SecureRandom().nextBytes(raw);
-//
-//            final SecretKey key = new SecretKeySpec(raw, "AES");
-//            final byte[] wrapped = wrapper.wrap(key);
-//
-//            writeFully(keyFile, wrapped);
-//        }
-//
-//        // Even if we just generated the key, always read it back to ensure we
-//        // can read it successfully.
-//        final byte[] wrapped = readFully(keyFile);
-//        final SecretKey key = wrapper.unwrap(wrapped);
-//
-//        final Mac mac = Mac.getInstance("HmacSHA256");
-//        mac.init(key);
-//
-//        // Derive two different keys for encryption and authentication.
-//        final byte[] rawDataKey = new byte[DATA_KEY_LENGTH];
-//        final byte[] rawMacKey = new byte[MAC_KEY_LENGTH];
-//
-//        System.arraycopy(mac.doFinal(BLOB_DATA), 0, rawDataKey, 0, rawDataKey.length);
-//        System.arraycopy(mac.doFinal(BLOB_MAC), 0, rawMacKey, 0, rawMacKey.length);
-//
-//        mDataKey = new SecretKeySpec(rawDataKey, "AES");
-//        mMacKey = new SecretKeySpec(rawMacKey, "HmacSHA256");
-//    }
     @Override
     public Cursor queryRoots(String[] projection) throws FileNotFoundException {
         final MatrixCursor result = new MatrixCursor(resolveRootProjection(projection));
@@ -341,76 +274,77 @@ public class VaultProvider extends DocumentsProvider {
 
     @Override
     public void deleteDocument(String documentId) throws FileNotFoundException {
-//        final long docId = Long.parseLong(documentId);
-//
-//        try {
-//            // Delete given document, any children documents under it, and any
-//            // references to it from parents.
-//            deleteDocumentTree(docId);
-//            deleteDocumentReferences(docId);
-//
-//        } catch (IOException e) {
-//            throw new IllegalStateException(e);
-//        } catch (GeneralSecurityException e) {
-//            throw new IllegalStateException(e);
-//        }
+        final long docId = Long.parseLong(documentId);
+
+        try {
+            // Delete given document, any children documents under it, and any
+            // references to it from parents.
+            deleteDocumentTree(docId);
+            deleteDocumentReferences(docId);
+
+        } catch (IOException e) {
+            throw new IllegalStateException(e);
+        } catch (GeneralSecurityException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     /**
      * Recursively delete the given document and any children under it.
      */
-//    private void deleteDocumentTree(long docId) throws IOException, GeneralSecurityException {
-//        final EncryptedDocument doc = getDocument(docId, getContext(), mServiceConnection);
-//        final JSONObject meta = doc.readMetadata(null);
-//        try {
-//            if (Document.MIME_TYPE_DIR.equals(meta.getString(Document.COLUMN_MIME_TYPE))) {
-//                final JSONArray children = meta.getJSONArray(KEY_CHILDREN);
-//                for (int i = 0; i < children.length(); i++) {
-//                    final long childDocId = children.getLong(i);
-//                    deleteDocumentTree(childDocId);
-//                }
-//            }
-//        } catch (JSONException e) {
-//            throw new IOException(e);
-//        }
-//
-//        if (!doc.getFile().delete()) {
-//            throw new IOException("Failed to delete " + docId);
-//        }
-//    }
+    private void deleteDocumentTree(long docId) throws IOException, GeneralSecurityException {
+        final EncryptedDocument doc = getDocument(docId);
+        final JSONObject meta = doc.readMetadata();
+        try {
+            if (Document.MIME_TYPE_DIR.equals(meta.getString(Document.COLUMN_MIME_TYPE))) {
+                final JSONArray children = meta.getJSONArray(KEY_CHILDREN);
+                for (int i = 0; i < children.length(); i++) {
+                    final long childDocId = children.getLong(i);
+                    deleteDocumentTree(childDocId);
+                }
+            }
+        } catch (JSONException e) {
+            throw new IOException(e);
+        }
+
+        if (!doc.getFile().delete()) {
+            throw new IOException("Failed to delete " + docId);
+        }
+    }
 
     /**
      * Remove any references to the given document, usually when included as a
      * child of another directory.
      */
-//    private void deleteDocumentReferences(long docId) {
-//        for (String name : mDocumentsDir.list()) {
-//            try {
-//                final long parentDocId = Long.parseLong(name);
-//                final EncryptedDocument parentDoc = getDocument(parentDocId);
-//                final JSONObject meta = parentDoc.readMetadata();
-//
-//                if (Document.MIME_TYPE_DIR.equals(meta.getString(Document.COLUMN_MIME_TYPE))) {
-//                    final JSONArray children = meta.getJSONArray(KEY_CHILDREN);
-//                    if (maybeRemove(children, docId)) {
-//                        Log.d(TAG, "Removed " + docId + " reference from " + name);
-//                        parentDoc.writeMetadataAndContent(meta, null);
-//
-//                        getContext().getContentResolver().notifyChange(
-//                                DocumentsContract.buildChildDocumentsUri(AUTHORITY, name), null,
-//                                false);
-//                    }
-//                }
-//            } catch (NumberFormatException ignored) {
-//            } catch (IOException e) {
-//                Log.w(TAG, "Failed to examine " + name, e);
-//            } catch (GeneralSecurityException e) {
-//                Log.w(TAG, "Failed to examine " + name, e);
-//            } catch (JSONException e) {
-//                Log.w(TAG, "Failed to examine " + name, e);
-//            }
-//        }
-//    }
+    private void deleteDocumentReferences(long docId) {
+        for (String name : mDocumentsDir.list()) {
+            try {
+                final long parentDocId = Long.parseLong(name);
+                final EncryptedDocument parentDoc = getDocument(parentDocId);
+                final JSONObject meta = parentDoc.readMetadata();
+
+                if (Document.MIME_TYPE_DIR.equals(meta.getString(Document.COLUMN_MIME_TYPE))) {
+                    final JSONArray children = meta.getJSONArray(KEY_CHILDREN);
+                    if (maybeRemove(children, docId)) {
+                        Log.d(TAG, "Removed " + docId + " reference from " + name);
+                        parentDoc.writeMetadataAndContent(meta, null);
+
+                        getContext().getContentResolver().notifyChange(
+                                DocumentsContract.buildChildDocumentsUri(AUTHORITY, name), null,
+                                false);
+                    }
+                }
+            } catch (NumberFormatException ignored) {
+            } catch (IOException e) {
+                Log.w(TAG, "Failed to examine " + name, e);
+            } catch (GeneralSecurityException e) {
+                Log.w(TAG, "Failed to examine " + name, e);
+            } catch (JSONException e) {
+                Log.w(TAG, "Failed to examine " + name, e);
+            }
+        }
+    }
+
     @Override
     public Cursor queryDocument(String documentId, String[] projection)
             throws FileNotFoundException {
@@ -430,24 +364,13 @@ public class VaultProvider extends DocumentsProvider {
             String parentDocumentId, String[] projection, String sortOrder)
             throws FileNotFoundException {
 
-
-//        Intent intent = new Intent("org.sufficientlysecure.keychain.action.ENCRYPT");
-//        intent.putExtra("text", "hallo");
-//        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-//        getContext().startActivity(intent);
-
-
         final ExtrasMatrixCursor result = new ExtrasMatrixCursor(
                 resolveDocumentProjection(projection));
         result.setNotificationUri(getContext().getContentResolver(),
                 DocumentsContract.buildChildDocumentsUri(AUTHORITY, parentDocumentId));
 
-        // Notify user in storage UI when key isn't hardware-backed
-//        if (!mHardwareBacked) {
-
-        // TODO: not for special root folder!
+        // TODO: Extra inf below? not for special root folder!
 //        result.putString(DocumentsContract.EXTRA_INFO, "bla");
-//        }
 
         try {
             final EncryptedDocument doc = getDocument(Long.parseLong(parentDocumentId));
@@ -474,6 +397,33 @@ public class VaultProvider extends DocumentsProvider {
             String documentId, String mode, CancellationSignal signal)
             throws FileNotFoundException {
         final long docId = Long.parseLong(documentId);
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
+
+        builder.setTitle("Confirm");
+        builder.setMessage("Are you sure?");
+
+        builder.setPositiveButton("YES", new DialogInterface.OnClickListener() {
+
+            public void onClick(DialogInterface dialog, int which) {
+                // Do nothing but close the dialog
+
+                dialog.dismiss();
+            }
+
+        });
+
+        builder.setNegativeButton("NO", new DialogInterface.OnClickListener() {
+
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                // Do nothing
+                dialog.dismiss();
+            }
+        });
+
+        AlertDialog alert = builder.create();
+        alert.show();
 
         try {
             final EncryptedDocument doc = getDocument(docId);
@@ -535,6 +485,7 @@ public class VaultProvider extends DocumentsProvider {
             @Override
             public void run() {
                 try {
+                    // get already written metadata from file
                     final JSONObject meta = doc.readMetadata();
                     doc.writeMetadataAndContent(meta, readEnd);
                     Log.d(TAG, "Success writing " + doc);
@@ -557,19 +508,19 @@ public class VaultProvider extends DocumentsProvider {
      *
      * @return if the array was mutated.
      */
-//    private static boolean maybeRemove(JSONArray array, long value) throws JSONException {
-//        boolean mutated = false;
-//        int i = 0;
-//        while (i < array.length()) {
-//            if (value == array.getLong(i)) {
-//                array.remove(i);
-//                mutated = true;
-//            } else {
-//                i++;
-//            }
-//        }
-//        return mutated;
-//    }
+    private static boolean maybeRemove(JSONArray array, long value) throws JSONException {
+        boolean mutated = false;
+        int i = 0;
+        while (i < array.length()) {
+            if (value == array.getLong(i)) {
+                array.remove(i);
+                mutated = true;
+            } else {
+                i++;
+            }
+        }
+        return mutated;
+    }
 
     /**
      * Simple extension of {@link MatrixCursor} that makes it easy to provide a
