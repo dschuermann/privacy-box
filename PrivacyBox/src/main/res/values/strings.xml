@@ -1,5 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- Copyright (C) 2013 The Android Open Source Project
+<?xml version="1.0" encoding="utf-8"?><!-- Copyright (C) 2013 The Android Open Source Project
 
      Licensed under the Apache License, Version 2.0 (the "License");
      you may not use this file except in compliance with the License.
@@ -16,6 +15,11 @@
 
 <resources>
     <string name="app_label">PrivacyBox</string>
-    <string name="info_software">Software-backed</string>
-    <string name="info_software_detail">Encryption key is software-backed, which is less secure.</string>
+
+    <!-- Dialog -->
+    <string name="open_dialog_title">Decrypt and open?</string>
+    <string name="open_dialog_text">Decrypt the file to open it with your favorite viewer or get it encrypted to upload or share it?\n\nIf you upload it, keep in mind that it can only be decrypted by yourself, you can however decrypt it using a desktop PGP application, such as GnuPG.</string>
+    <string name="open_dialog_decrypt_open_button">Decrypt and open</string>
+    <string name="open_dialog_get_encrypted_button">Get encrypted</string>
+
 </resources>

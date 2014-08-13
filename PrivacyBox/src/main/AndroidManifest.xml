@@ -22,7 +22,7 @@
             android:label="@string/app_label"
             android:exported="false" />
         <activity
-            android:name=".DialogActivity"
+            android:name=".OpenDialogActivity"
             android:theme="@android:style/Theme.NoDisplay"
             android:label="@string/app_label"
             android:exported="false" />

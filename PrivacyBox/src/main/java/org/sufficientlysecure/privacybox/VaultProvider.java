@@ -17,9 +17,7 @@
 
 package org.sufficientlysecure.privacybox;
 
-import android.app.AlertDialog;
 import android.content.Context;
-import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.database.Cursor;
@@ -28,16 +26,14 @@ import android.database.MatrixCursor.RowBuilder;
 import android.os.Bundle;
 import android.os.CancellationSignal;
 import android.os.Handler;
-import android.os.HandlerThread;
 import android.os.Looper;
-import android.os.Message;
+import android.os.Messenger;
 import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
 import android.provider.DocumentsContract.Document;
 import android.provider.DocumentsContract.Root;
 import android.provider.DocumentsProvider;
 import android.util.Log;
-import android.widget.Toast;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -49,7 +45,6 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.security.GeneralSecurityException;
-import java.security.KeyStore;
 
 import static org.sufficientlysecure.privacybox.Utils.closeQuietly;
 import static org.sufficientlysecure.privacybox.Utils.closeWithErrorQuietly;
@@ -408,10 +403,10 @@ public class VaultProvider extends DocumentsProvider {
 
 
         // start proxy activity and wait here for it finishing...
-        Intent dialog = new Intent(getContext(), DialogActivity.class);
+        Intent dialog = new Intent(getContext(), OpenDialogActivity.class);
         dialog.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-//        proxy.putExtra(KeychainProxyActivity.EXTRA_MESSENGER, messenger);
-//        proxy.putExtra(KeychainProxyActivity.EXTRA_PENDING_INTENT, pi);
+        dialog.putExtra(OpenDialogActivity.EXTRA_MESSENGER, new Messenger(new Handler(Looper.getMainLooper())));
+        dialog.putExtra(OpenDialogActivity.EXTRA_FILENAME, "test");
 
         getContext().startActivity(dialog);
 

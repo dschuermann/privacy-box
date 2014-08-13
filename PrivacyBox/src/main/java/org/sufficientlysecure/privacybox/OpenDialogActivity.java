@@ -22,8 +22,14 @@ import android.app.AlertDialog;
 import android.app.Dialog;
 import android.app.DialogFragment;
 import android.content.DialogInterface;
+import android.graphics.Typeface;
 import android.os.Bundle;
 import android.os.Messenger;
+import android.text.Spannable;
+import android.text.SpannableString;
+import android.text.SpannedString;
+import android.text.TextUtils;
+import android.text.style.StyleSpan;
 import android.util.Log;
 import android.view.ContextThemeWrapper;
 
@@ -31,13 +37,12 @@ import android.view.ContextThemeWrapper;
  * We can not directly create a dialog on the context provided inside the content provider.
  * This activity encapsulates a DialogFragment to emulate a dialog.
  */
-public class DialogActivity extends Activity {
+public class OpenDialogActivity extends Activity {
 
     public static final String EXTRA_MESSENGER = "messenger";
+    public static final String EXTRA_FILENAME = "filename";
 
     public static final String RESULT_BUNDLE_DATA_INTENT = "intent";
-
-    Messenger mMessenger;
 
     MyDialogFragment mDialogFragment;
 
@@ -45,19 +50,18 @@ public class DialogActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        mMessenger = getIntent().getParcelableExtra(EXTRA_MESSENGER);
-
         // this activity itself has no content view (see manifest)
 
-        // Create an instance of the fragment
         mDialogFragment = new MyDialogFragment();
-        // start it
+        // give all extras through to the fragment
+        mDialogFragment.setArguments(getIntent().getExtras());
+
         mDialogFragment.show(getFragmentManager(), "dialog");
     }
 
     public static class MyDialogFragment extends DialogFragment {
-        private static final String ARG_MESSENGER = "messenger";
-        private static final String ARG_NAME = "name";
+//        private static final String ARG_MESSENGER = "messenger";
+//        private static final String ARG_NAME = "name";
 
         public static final int MESSAGE_OKAY = 1;
         public static final int MESSAGE_CANCEL = 2;
@@ -82,8 +86,9 @@ public class DialogActivity extends Activity {
          */
         @Override
         public Dialog onCreateDialog(Bundle savedInstanceState) {
-            final Activity activity = getActivity();
-//            mMessenger = getArguments().getParcelable(ARG_MESSENGER);
+            mMessenger = getArguments().getParcelable(EXTRA_MESSENGER);
+            String filename = getArguments().getString(EXTRA_FILENAME);
+
 //            String predefinedName = getArguments().getString(ARG_NAME);
 
             // hack to get holo design (which is not automatically applied due to activity's Theme.NoDisplay
@@ -91,15 +96,22 @@ public class DialogActivity extends Activity {
                     android.R.style.Theme_DeviceDefault_Light_Dialog);
             AlertDialog.Builder alert = new AlertDialog.Builder(context);
 
-            alert.setTitle("rt");
-            alert.setMessage("test");
+            final SpannableString filenameBold = new SpannableString(filename);
+            StyleSpan boldSpan = new StyleSpan(Typeface.BOLD);
+            filenameBold.setSpan(boldSpan, 0, filenameBold.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+
+            SpannedString message = (SpannedString) TextUtils.concat(filenameBold, "\n\n", getString(R.string.open_dialog_text));
+
+//            filename
+            alert.setTitle(R.string.open_dialog_title);
+            alert.setMessage(message);
 
 //            LayoutInflater inflater = activity.getLayoutInflater();
 //            View view = inflater.inflate(R.layout.add_user_id_dialog, null);
 //            alert.setView(view);
 
 
-            alert.setPositiveButton(android.R.string.ok, new DialogInterface.OnClickListener() {
+            alert.setPositiveButton(R.string.open_dialog_decrypt_open_button, new DialogInterface.OnClickListener() {
                 @Override
                 public void onClick(DialogInterface dialog, int id) {
                     dismiss();
@@ -112,7 +124,7 @@ public class DialogActivity extends Activity {
                 }
             });
 
-            alert.setNegativeButton(android.R.string.cancel, new DialogInterface.OnClickListener() {
+            alert.setNegativeButton(R.string.open_dialog_get_encrypted_button, new DialogInterface.OnClickListener() {
                 @Override
                 public void onClick(DialogInterface dialog, int id) {
                     dialog.cancel();
