@@ -24,7 +24,9 @@ import android.app.DialogFragment;
 import android.content.DialogInterface;
 import android.graphics.Typeface;
 import android.os.Bundle;
+import android.os.Message;
 import android.os.Messenger;
+import android.os.RemoteException;
 import android.text.Spannable;
 import android.text.SpannableString;
 import android.text.SpannedString;
@@ -42,7 +44,9 @@ public class OpenDialogActivity extends Activity {
     public static final String EXTRA_MESSENGER = "messenger";
     public static final String EXTRA_FILENAME = "filename";
 
-    public static final String RESULT_BUNDLE_DATA_INTENT = "intent";
+    public static final int MSG_CANCEL = 1;
+    public static final int MSG_DECRYPT_OPEN = 2;
+    public static final int MSG_GET_ENCRYPTED = 3;
 
     MyDialogFragment mDialogFragment;
 
@@ -60,26 +64,8 @@ public class OpenDialogActivity extends Activity {
     }
 
     public static class MyDialogFragment extends DialogFragment {
-//        private static final String ARG_MESSENGER = "messenger";
-//        private static final String ARG_NAME = "name";
-
-        public static final int MESSAGE_OKAY = 1;
-        public static final int MESSAGE_CANCEL = 2;
-
-        public static final String MESSAGE_DATA_USER_ID = "user_id";
 
         private Messenger mMessenger;
-
-//        public static MyDialogFragment newInstance(Messenger messenger) {
-//
-//            MyDialogFragment frag = new MyDialogFragment();
-//            Bundle args = new Bundle();
-////            args.putParcelable(ARG_MESSENGER, messenger);
-////            args.putString(ARG_NAME, predefinedName);
-//            frag.setArguments(args);
-//
-//            return frag;
-//        }
 
         /**
          * Creates dialog
@@ -88,8 +74,6 @@ public class OpenDialogActivity extends Activity {
         public Dialog onCreateDialog(Bundle savedInstanceState) {
             mMessenger = getArguments().getParcelable(EXTRA_MESSENGER);
             String filename = getArguments().getString(EXTRA_FILENAME);
-
-//            String predefinedName = getArguments().getString(ARG_NAME);
 
             // hack to get holo design (which is not automatically applied due to activity's Theme.NoDisplay
             ContextThemeWrapper context = new ContextThemeWrapper(getActivity(),
@@ -102,46 +86,36 @@ public class OpenDialogActivity extends Activity {
 
             SpannedString message = (SpannedString) TextUtils.concat(filenameBold, "\n\n", getString(R.string.open_dialog_text));
 
-//            filename
             alert.setTitle(R.string.open_dialog_title);
             alert.setMessage(message);
-
-//            LayoutInflater inflater = activity.getLayoutInflater();
-//            View view = inflater.inflate(R.layout.add_user_id_dialog, null);
-//            alert.setView(view);
-
 
             alert.setPositiveButton(R.string.open_dialog_decrypt_open_button, new DialogInterface.OnClickListener() {
                 @Override
                 public void onClick(DialogInterface dialog, int id) {
                     dismiss();
-
-//                    Bundle data = new Bundle();
-//                    String userId = KeyRing.createUserId(mName.getText().toString(),
-//                            mEmail.getText().toString(), mComment.getText().toString());
-//                    data.putString(MESSAGE_DATA_USER_ID, userId);
-//                    sendMessageToHandler(MESSAGE_OKAY, data);
+                    sendMessageToHandler(MSG_DECRYPT_OPEN);
                 }
             });
 
             alert.setNegativeButton(R.string.open_dialog_get_encrypted_button, new DialogInterface.OnClickListener() {
                 @Override
                 public void onClick(DialogInterface dialog, int id) {
-                    dialog.cancel();
+                    dismiss();
+                    sendMessageToHandler(MSG_GET_ENCRYPTED);
                 }
             });
 
             return alert.show();
         }
 
-        //        @Override
-//        public void onCancel(DialogInterface dialog) {
-//            super.onCancel(dialog);
-//
-//            dismiss();
-//            sendMessageToHandler(MESSAGE_CANCEL);
-//        }
-//
+        @Override
+        public void onCancel(DialogInterface dialog) {
+            super.onCancel(dialog);
+
+            dismiss();
+            sendMessageToHandler(MSG_CANCEL);
+        }
+
         @Override
         public void onDismiss(DialogInterface dialog) {
             super.onDismiss(dialog);
@@ -151,45 +125,23 @@ public class OpenDialogActivity extends Activity {
             getActivity().finish();
         }
 
+        /**
+         * Send message back to handler which is initialized in a activity
+         *
+         * @param what Message integer you want to send
+         */
+        private void sendMessageToHandler(Integer what) {
+            Message msg = Message.obtain();
+            msg.what = what;
 
-//        /**
-//         * Send message back to handler which is initialized in a activity
-//         *
-//         * @param what Message integer you want to send
-//         */
-//        private void sendMessageToHandler(Integer what) {
-//            Message msg = Message.obtain();
-//            msg.what = what;
-//
-//            try {
-//                mMessenger.send(msg);
-//            } catch (RemoteException e) {
-//                Log.w(Constants.TAG, "Exception sending message, Is handler present?", e);
-//            } catch (NullPointerException e) {
-//                Log.w(Constants.TAG, "Messenger is null!", e);
-//            }
-//        }
-//
-//        /**
-//         * Send message back to handler which is initialized in a activity
-//         *
-//         * @param what Message integer you want to send
-//         */
-//        private void sendMessageToHandler(Integer what, Bundle data) {
-//            Message msg = Message.obtain();
-//            msg.what = what;
-//            if (data != null) {
-//                msg.setData(data);
-//            }
-//
-//            try {
-//                mMessenger.send(msg);
-//            } catch (RemoteException e) {
-//                Log.w(Constants.TAG, "Exception sending message, Is handler present?", e);
-//            } catch (NullPointerException e) {
-//                Log.w(Constants.TAG, "Messenger is null!", e);
-//            }
-//        }
+            try {
+                mMessenger.send(msg);
+            } catch (RemoteException e) {
+                Log.w(VaultProvider.TAG, "Exception sending message, Is handler present?", e);
+            } catch (NullPointerException e) {
+                Log.w(VaultProvider.TAG, "Messenger is null!", e);
+            }
+        }
 
     }
 

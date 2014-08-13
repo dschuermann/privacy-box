@@ -1,6 +1,5 @@
 PrivacyBox
 ==========
 
-This does not compile currently!
+This is not working currently! Don't use it!
 
-nothing to see here, move along...
