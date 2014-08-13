@@ -21,6 +21,11 @@
             android:name=".KeychainProxyActivity"
             android:label="@string/app_label"
             android:exported="false" />
+        <activity
+            android:name=".DialogActivity"
+            android:theme="@android:style/Theme.NoDisplay"
+            android:label="@string/app_label"
+            android:exported="false" />
     </application>
 
 </manifest>

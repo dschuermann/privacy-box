@@ -20,18 +20,24 @@ package org.sufficientlysecure.privacybox;
 import android.app.AlertDialog;
 import android.content.Context;
 import android.content.DialogInterface;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.database.MatrixCursor.RowBuilder;
 import android.os.Bundle;
 import android.os.CancellationSignal;
+import android.os.Handler;
+import android.os.HandlerThread;
+import android.os.Looper;
+import android.os.Message;
 import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
 import android.provider.DocumentsContract.Document;
 import android.provider.DocumentsContract.Root;
 import android.provider.DocumentsProvider;
 import android.util.Log;
+import android.widget.Toast;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -97,6 +103,7 @@ public class VaultProvider extends DocumentsProvider {
 
     private final Object mIdLock = new Object();
 
+    private final Object mUILock = new Object();
 
     private OpenPgpServiceConnection mServiceConnection;
 
@@ -398,32 +405,26 @@ public class VaultProvider extends DocumentsProvider {
             throws FileNotFoundException {
         final long docId = Long.parseLong(documentId);
 
-        AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
 
-        builder.setTitle("Confirm");
-        builder.setMessage("Are you sure?");
 
-        builder.setPositiveButton("YES", new DialogInterface.OnClickListener() {
+        // start proxy activity and wait here for it finishing...
+        Intent dialog = new Intent(getContext(), DialogActivity.class);
+        dialog.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+//        proxy.putExtra(KeychainProxyActivity.EXTRA_MESSENGER, messenger);
+//        proxy.putExtra(KeychainProxyActivity.EXTRA_PENDING_INTENT, pi);
 
-            public void onClick(DialogInterface dialog, int which) {
-                // Do nothing but close the dialog
+        getContext().startActivity(dialog);
 
-                dialog.dismiss();
+//        Log.d(TAG, "before wait");
+//
+        synchronized (mUILock) {
+            try {
+                mUILock.wait();
+            } catch (InterruptedException e) {
+               Log.e(TAG, "interrupt", e);
             }
-
-        });
-
-        builder.setNegativeButton("NO", new DialogInterface.OnClickListener() {
-
-            @Override
-            public void onClick(DialogInterface dialog, int which) {
-                // Do nothing
-                dialog.dismiss();
-            }
-        });
-
-        AlertDialog alert = builder.create();
-        alert.show();
+        }
+        Log.d(TAG, "after wait");
 
         try {
             final EncryptedDocument doc = getDocument(docId);
